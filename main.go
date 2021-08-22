@@ -78,6 +78,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 	conf, err := readConfigFile(configPath)
 	if err != nil {
 		log.Error().Err(err).Str("config", configPath).Msg("Failed to read config file.")
+		return 1
 	}
 
 	if printConfigAndExit {
