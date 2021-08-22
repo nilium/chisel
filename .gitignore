@@ -1,0 +1,7 @@
+/bin
+/sql.1
+
+.*.sw[a-z]
+Session.vim
+
+*.db
