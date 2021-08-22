@@ -25,6 +25,7 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/zerolog"
+	"go.spiff.io/sql/vdb"
 )
 
 type ParamKey interface {
@@ -62,6 +63,8 @@ func (p Params) MarshalJSON() ([]byte, error) {
 
 type Handler struct {
 	*EndpointDef
+
+	db map[string]*Database
 }
 
 func (h *Handler) ParseParams(req *http.Request, pathParams httprouter.Params) (Params, error) {
@@ -178,4 +181,6 @@ func (h *Handler) Post(w http.ResponseWriter, req *http.Request, pathParams http
 
 func (h *Handler) Serve(w http.ResponseWriter, req *http.Request, params Params, body interface{}) {
 	// TODO: Pass body, params through endpoint transaction stages.
+	transactions := make([]vdb.DB, len(h.Query.Transactions))
+	_ = transactions
 }

@@ -24,15 +24,18 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/go-sockaddr"
+	"github.com/jmoiron/sqlx"
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/zerolog"
 	"go.spiff.io/flagenv"
+	"go.spiff.io/sql/driver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 )
@@ -81,6 +84,11 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 		return 1
 	}
 
+	if err := conf.Validate(); err != nil {
+		log.Error().Err(err).Msg("Config validation failed.")
+		return 1
+	}
+
 	if printConfigAndExit {
 		data, err := json.Marshal(conf)
 		if err != nil {
@@ -89,6 +97,55 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 		}
 		log.Info().RawJSON("config", data).Msg("Config parsed, exiting.")
 		return 0
+	}
+
+	dbs := make(map[string]*Database, len(conf.Databases))
+	for k, dbe := range conf.Databases {
+		dbe := *dbe
+
+		log := log.With().
+			Err(err).
+			Str("database", k).
+			Logger()
+
+		u, err := url.Parse(dbe.URL)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to parse database URL.")
+			return 1
+		}
+
+		driver, dsn, bindType, err := driver.DSNFromURL(u)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to construct database DSN.")
+			return 1
+		}
+		dbe.Options.BindType = bindType
+
+		pool, err := sqlx.Open(driver, dsn)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to open database connection pool.")
+			return 1
+		}
+		defer pool.Close()
+
+		// Set optional config.
+		if dbe.MaxIdle > 0 {
+			pool.SetMaxIdleConns(dbe.MaxIdle)
+		}
+		if dbe.MaxOpen > 0 {
+			pool.SetMaxIdleConns(dbe.MaxOpen)
+		}
+		if dbe.MaxIdleTime.Duration > 0 {
+			pool.SetConnMaxIdleTime(dbe.MaxIdleTime.Duration)
+		}
+		if dbe.MaxLifeTime.Duration > 0 {
+			pool.SetConnMaxLifetime(dbe.MaxLifeTime.Duration)
+		}
+
+		dbs[k] = &Database{
+			db:          pool,
+			DatabaseDef: &dbe,
+		}
 	}
 
 	if len(conf.Bind) == 0 {
@@ -101,8 +158,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 
 	listeners := make([]net.Listener, len(conf.Bind))
 	servers := make([]*http.Server, len(conf.Bind))
-	for i, caddr := range conf.Bind {
-		bid := i + 1
+	for bid, caddr := range conf.Bind {
 		network, addr := caddr.ListenStreamArgs()
 		llog := log.With().
 			Int("binding", bid).
@@ -138,7 +194,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 			rt.Handle(method, ed.Path, fn)
 		}
 
-		listeners[i] = l
+		listeners[bid] = l
 		laddr := l.Addr().String()
 		llog.Info().Stringer("laddr", l.Addr()).Msg("Listening on address.")
 
@@ -149,7 +205,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 
 		ctx := log.WithContext(ctx)
 
-		servers[i] = &http.Server{
+		servers[bid] = &http.Server{
 			Handler: rt,
 			BaseContext: func(net.Listener) context.Context {
 				return ctx
@@ -158,13 +214,13 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 	}
 
 	wg, ctx := errgroup.WithContext(ctx)
-	for i, sv := range servers {
+	for sid, sv := range servers {
 		sv := sv
-		l := listeners[i]
+		l := listeners[sid]
 		laddr := l.Addr().String()
 
 		log := log.With().
-			Int("binding", i+1).
+			Int("binding", sid).
 			Str("laddr", laddr).
 			Logger()
 

@@ -1,0 +1,51 @@
+{
+  "bind": [
+    "127.0.0.1:8080"
+  ],
+  "databases": {
+    "test": {
+      "url": "sqlite://test.db",
+      "options": {
+        "try_json": true
+      }
+    }
+  },
+
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/foo",
+      "query": {
+        "transactions": [
+          { "db": "test", "isolation": "none" }
+        ],
+        "steps": [
+          {
+            "transaction": 0,
+            "query": "select * from foo"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/foo/:id",
+      "path_params": {
+        "id": { "map": ["tonumber"] }
+      },
+      "query": {
+        "transactions": [
+          { "db": "test", "isolation": "none" }
+        ],
+        "steps": [
+          {
+            "query": "select * from foo where id = ?",
+            "args": [
+              { "path": "id" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
