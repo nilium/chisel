@@ -1,4 +1,4 @@
-// chisel - A tool to serve fetch, transform, and serve data.
+// chisel - A tool to fetch, transform, and serve data.
 // Copyright (C) 2021 Noel Cower
 //
 // This program is free software: you can redistribute it and/or modify
