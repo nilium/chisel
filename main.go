@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/go-sockaddr"
@@ -62,7 +63,12 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 
 	fs.StringVar(&configPath, "c", configPath, "The path to load program config JSON from.")
 	fs.BoolVar(&printConfigAndExit, "C", printConfigAndExit, "Print the parsed program config and exit.")
-	fs.Parse(args)
+	err := fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return 2
+	} else if err != nil {
+		return 1
+	}
 
 	if err := flagenv.SetMissing(fs); err != nil {
 		log.Error().Err(err).Msg("Error configuring chisel via environment.")
@@ -97,7 +103,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 	for i, caddr := range conf.Bind {
 		bid := i + 1
 		network, addr := caddr.ListenStreamArgs()
-		log := log.With().
+		llog := log.With().
 			Int("binding", bid).
 			Str("addr", addr).
 			Str("net", network).
@@ -106,13 +112,13 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 		case sockaddr.TypeUnix:
 		case sockaddr.TypeIPv4, sockaddr.TypeIPv6:
 		default:
-			log.Error().Stringer("type", t).Msg("Unrecognized binding type for address.")
+			llog.Error().Stringer("type", t).Msg("Unrecognized binding type for address.")
 			return 1
 		}
 
 		l, err := net.Listen(network, addr)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to bind to address.")
+			llog.Error().Err(err).Msg("Failed to bind to address.")
 			return 1
 		}
 		defer l.Close()
@@ -123,20 +129,30 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 				continue
 			}
 			handler := &Handler{EndpointDef: ed}
+			method := strings.ToUpper(ed.Method)
 			fn := handler.Get
-			if ed.Method != "GET" {
+			if method != "GET" {
 				fn = handler.Post
 			}
-			rt.Handle(ed.Method, ed.Path, fn)
+			rt.Handle(method, ed.Path, fn)
 		}
 
 		listeners[i] = l
-		log.Info().Stringer("laddr", l.Addr()).Msg("Listening on address.")
+		laddr := l.Addr().String()
+		llog.Info().Stringer("laddr", l.Addr()).Msg("Listening on address.")
+
+		log := log.With().
+			Int("binding", bid).
+			Str("laddr", laddr).
+			Logger()
+
+		ctx := log.WithContext(ctx)
 
 		servers[i] = &http.Server{
 			Handler: rt,
-			// TODO: Assign base context to requests to include
-			// logger.
+			BaseContext: func(net.Listener) context.Context {
+				return ctx
+			},
 		}
 	}
 

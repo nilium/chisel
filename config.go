@@ -263,20 +263,20 @@ type Mapping struct {
 var ErrNoMapping = errors.New("no result from output mapping")
 var ErrMultipleMapping = errors.New("mapping produced multiple values")
 
-func (m *Mapping) Apply(ctx context.Context, str string) (interface{}, error) {
+func (m *Mapping) Apply(ctx context.Context, input interface{}) (interface{}, error) {
 	if len(m.Exprs) == 0 {
-		return str, nil
+		return input, nil
 	}
 
-	var v interface{} = str
+	var output interface{} = input
 	var ok bool
 	for _, e := range m.Exprs {
-		iter := e.Code.RunWithContext(ctx, v)
-		v, ok = iter.Next()
+		iter := e.Code.RunWithContext(ctx, output)
+		output, ok = iter.Next()
 		if !ok {
 			return nil, fmt.Errorf("no value returned by mapping %s: %w", e.ID, ErrNoMapping)
 		}
-		if err, ok := v.(error); ok {
+		if err, ok := output.(error); ok {
 			return nil, fmt.Errorf("error in mapping %s: %w", e.ID, err)
 		}
 		_, ok = iter.Next()
@@ -285,7 +285,7 @@ func (m *Mapping) Apply(ctx context.Context, str string) (interface{}, error) {
 		}
 	}
 
-	return v, nil
+	return output, nil
 }
 
 func (m *Mapping) UnmarshalJSON(src []byte) error {
