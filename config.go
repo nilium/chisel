@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,14 +31,33 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/go-sockaddr"
 	"github.com/itchyny/gojq"
+	"github.com/tailscale/hujson"
 	"go.spiff.io/sql/vdb"
+	"gopkg.in/yaml.v3"
 )
 
+type SockAddr struct {
+	sockaddr.SockAddr
+}
+
+func (sa SockAddr) MarshalText() ([]byte, error) {
+	return []byte(sa.String()), nil
+}
+
+func (sa *SockAddr) UnmarshalText(src []byte) error {
+	saddr, err := sockaddr.NewSockAddr(string(src))
+	if err != nil {
+		return fmt.Errorf("error parsing sockaddr: %w", err)
+	}
+	*sa = SockAddr{saddr}
+	return nil
+}
+
 type Config struct {
-	Bind      []sockaddr.SockAddrMarshaler `json:"bind"`
-	Databases map[string]*DatabaseDef      `json:"databases"`
-	Modules   map[string]*ModuleDef        `json:"modules"`
-	Endpoints EndpointDefs                 `json:"endpoints"`
+	Bind      []SockAddr              `json:"bind"`
+	Databases map[string]*DatabaseDef `json:"databases"`
+	Modules   map[string]*ModuleDef   `json:"modules"`
+	Endpoints EndpointDefs            `json:"endpoints"`
 }
 
 func (c *Config) Validate() error {
@@ -146,14 +166,58 @@ func (i IsolationLevel) Level() sql.IsolationLevel {
 	return sql.IsolationLevel(i)
 }
 
+type BodyType int
+
+const (
+	JSONBodyType   BodyType = iota // json - Default
+	FormBodyType                   // form
+	StringBodyType                 // string
+	NoBodyType                     // none
+)
+
+func (b BodyType) MarshalText() ([]byte, error) {
+	typ := "json"
+	switch b {
+	case JSONBodyType:
+	case FormBodyType:
+		typ = "form"
+	case StringBodyType:
+		typ = "string"
+	case NoBodyType:
+		typ = "none"
+	default:
+		return nil, fmt.Errorf("unrecognized body type %d", b)
+	}
+	return []byte(typ), nil
+}
+
+func (b *BodyType) UnmarshalText(src []byte) error {
+	switch src := string(src); src {
+	case "json":
+		*b = JSONBodyType
+	case "form":
+		*b = FormBodyType
+	case "string":
+		*b = StringBodyType
+	case "none":
+		*b = NoBodyType
+	default:
+		return fmt.Errorf("unrecognized body type %q", src)
+	}
+	return nil
+}
+
 type EndpointDefs []*EndpointDef
 
+type ParamMappings map[string]*ParamMapping
+
 type EndpointDef struct {
-	Bind        IntSet                   `json:"bind"`
-	Method      string                   `json:"method"`
-	Path        string                   `json:"path"`
-	QueryParams map[string]*ParamMapping `json:"query_params"`
-	PathParams  map[string]*ParamMapping `json:"path_params"`
+	Bind        IntSet        `json:"bind"`
+	Method      string        `json:"method"`
+	Path        string        `json:"path"`
+	BodyType    BodyType      `json:"body_type"`
+	QueryParams ParamMappings `json:"query_params"`
+	PathParams  ParamMappings `json:"path_params"`
 
 	Query *QueryDef `json:"query"`
 }
@@ -211,6 +275,7 @@ type StepDef struct {
 	Transaction int     `json:"transaction"`
 	Query       string  `json:"query"`
 	Args        ArgDefs `json:"args"`
+	Map         Mapping `json:"map"`
 }
 
 type TransactionDef struct {
@@ -226,7 +291,7 @@ type ArgDefs []ArgDef
 
 func (ads *ArgDefs) UnmarshalJSON(src []byte) error {
 	var defs []json.RawMessage
-	if err := json.Unmarshal(src, &defs); err != nil {
+	if err := hujson.Unmarshal(src, &defs); err != nil {
 		return err
 	}
 
@@ -242,17 +307,81 @@ func (ads *ArgDefs) UnmarshalJSON(src []byte) error {
 	return nil
 }
 
-type ArgDef interface {
-	Value() (interface{}, error)
+func (ads *ArgDefs) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("expected sequence node for arg defs, got %d", node.Kind)
+	}
+	args := make(ArgDefs, len(node.Content))
+	for i, def := range node.Content {
+		ad, err := UnmarshalArgDefYAML(def)
+		if err != nil {
+			return fmt.Errorf("error unmarshaling arg %d: %w", i, err)
+		}
+		args[i] = ad
+	}
+	*ads = args
+	return nil
 }
 
-var ErrBadArgDef = errors.New("invalid arg def: must be a scalar, null, or contain a single key of 'path' or 'query'")
+type ArgDef interface {
+	param()
+}
+
+var ErrBadArgDef = errors.New("invalid arg def: must be a scalar, null, or contain a single key of 'path', 'query', or 'expr'")
+
+func UnmarshalArgDefYAML(node *yaml.Node) (ArgDef, error) {
+	if node.Kind == yaml.SequenceNode {
+		return nil, fmt.Errorf("unexpected sequence, expected mapping or other")
+	}
+	if node.Kind != yaml.MappingNode {
+		lit := ArgLiteral{}
+		if err := node.Decode(&lit.Literal); err != nil {
+			return nil, fmt.Errorf("error unmarshaling arg def as literal: %w", err)
+		}
+		return lit, nil
+	}
+
+	if len(node.Content) != 2 {
+		// Mapping has content with two items: a key, and
+		// a value.
+		return nil, ErrBadArgDef
+	}
+
+	var key string
+	if err := node.Content[0].Decode(&key); err != nil {
+		return nil, fmt.Errorf("error unmarshaling arg def key: %w", err)
+	}
+
+	value := node.Content[1]
+	switch key {
+	case "path":
+		var ref PathParamRef
+		if err := value.Decode(&ref.Name); err != nil {
+			return nil, fmt.Errorf("error unmarshaling path arg def: %w", err)
+		}
+		return ref, nil
+	case "query":
+		var ref QueryParamRef
+		if err := value.Decode(&ref.Name); err != nil {
+			return nil, fmt.Errorf("error unmarshaling query arg def: %w", err)
+		}
+		return ref, nil
+	case "expr":
+		var expr Expr
+		if err := value.Decode(&expr); err != nil {
+			return nil, fmt.Errorf("error unmarshaling expr arg def: %w", err)
+		}
+		return ExprParam{&expr}, nil
+	default:
+		return nil, ErrBadArgDef
+	}
+}
 
 func UnmarshalArgDef(blob json.RawMessage) (ArgDef, error) {
 	var m map[string]json.RawMessage
-	if json.Unmarshal(blob, &m) == nil {
+	if hujson.Unmarshal(blob, &m) == nil {
 		if m == nil {
-			return &ArgLiteral{Literal: nil}, nil
+			return ArgLiteral{Literal: nil}, nil
 		}
 		if len(m) != 1 {
 			return nil, ErrBadArgDef
@@ -266,28 +395,30 @@ func UnmarshalArgDef(blob json.RawMessage) (ArgDef, error) {
 		switch key {
 		case "path":
 			var ref PathParamRef
-			if err := json.Unmarshal(value, &ref.Name); err != nil {
+			if err := hujson.Unmarshal(value, &ref.Name); err != nil {
 				return nil, fmt.Errorf("error unmarshaling path arg def: %w", err)
 			}
-			return &ref, nil
+			return ref, nil
 		case "query":
 			var ref QueryParamRef
-			if err := json.Unmarshal(value, &ref.Name); err != nil {
+			if err := hujson.Unmarshal(value, &ref.Name); err != nil {
 				return nil, fmt.Errorf("error unmarshaling query arg def: %w", err)
 			}
-			return &ref, nil
+			return ref, nil
+		case "expr":
+			var expr Expr
+			if err := hujson.Unmarshal(value, &expr); err != nil {
+				return nil, fmt.Errorf("error unmarshaling expr arg def: %w", err)
+			}
+			return ExprParam{&expr}, nil
 		default:
 			return nil, ErrBadArgDef
 		}
 	}
 
-	lit := &ArgLiteral{}
-	if err := json.Unmarshal(blob, &lit.Literal); err != nil {
+	lit := ArgLiteral{}
+	if err := hujson.Unmarshal(blob, &lit.Literal); err != nil {
 		return nil, fmt.Errorf("error unmarshaling arg def as literal: %w", err)
-	}
-
-	if _, ok := lit.Literal.([]interface{}); ok {
-		return nil, ErrBadArgDef
 	}
 
 	return lit, nil
@@ -297,13 +428,11 @@ type ArgLiteral struct {
 	Literal interface{}
 }
 
-func (a ArgLiteral) Value() (interface{}, error) {
-	return a.Literal, nil
-}
-
 func (a ArgLiteral) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.Literal)
 }
+
+func (ArgLiteral) param() {}
 
 type PathParamRef struct {
 	Name string `json:"path"`
@@ -313,18 +442,33 @@ func (p PathParamRef) Value() (interface{}, error) {
 	return nil, errors.New("unimplemented")
 }
 
+func (PathParamRef) param() {}
+
 type QueryParamRef struct {
 	Name string `json:"query"`
 }
 
-func (q QueryParamRef) Value() (interface{}, error) {
-	return nil, errors.New("unimplemented")
+func (QueryParamRef) param() {}
+
+type ExprParam struct {
+	Expr *Expr `json:"expr"`
 }
+
+func (ExprParam) param() {}
 
 type Expr struct {
 	Options []gojq.CompilerOption
 	Query   *gojq.Query
 	Code    *gojq.Code
+}
+
+func gojqDebug(input interface{}, args []interface{}) interface{} {
+	data, err := json.Marshal(input)
+	if err != nil {
+		return input
+	}
+	fmt.Fprintf(os.Stderr, "DEBUG: %s\n", data)
+	return input
 }
 
 func (e *Expr) UnmarshalText(src []byte) error {
@@ -333,7 +477,7 @@ func (e *Expr) UnmarshalText(src []byte) error {
 		return fmt.Errorf("error parsing expression: %w", err)
 	}
 
-	c, err := gojq.Compile(q)
+	c, err := gojq.Compile(q, gojq.WithVariables([]string{"$context"}))
 	if err != nil {
 		return fmt.Errorf("error compiling expression: %w", err)
 	}
@@ -349,34 +493,42 @@ func (e *Expr) MarshalText() ([]byte, error) {
 	return []byte(e.Query.String()), nil
 }
 
+func (e *Expr) Apply(ctx context.Context, input, ctxVar interface{}) (interface{}, error) {
+	iter := e.Code.RunWithContext(ctx, input, ctxVar)
+	output, ok := iter.Next()
+	if !ok {
+		return nil, fmt.Errorf("no value returned by mapping: %w", ErrNoMapping)
+	}
+	if err, ok := output.(error); ok {
+		return nil, fmt.Errorf("error returned by mapping: %w", err)
+	}
+	_, ok = iter.Next()
+	if ok {
+		return nil, fmt.Errorf("unexpected results from mapping: %w", ErrMultipleMapping)
+	}
+	return output, nil
+}
+
 type Mapping []*Expr
 
 var ErrNoMapping = errors.New("no result from output mapping")
 var ErrMultipleMapping = errors.New("mapping produced multiple values")
 
-func (m Mapping) Apply(ctx context.Context, input interface{}) (interface{}, error) {
+func (m Mapping) Apply(ctx context.Context, input, ctxVar interface{}) (interface{}, error) {
 	if len(m) == 0 {
 		return input, nil
 	}
 
 	var output interface{} = input
-	var ok bool
+	var err error
 	for i, e := range m {
-		iter := e.Code.RunWithContext(ctx, output)
-		output, ok = iter.Next()
-		if !ok {
-			return nil, fmt.Errorf("no value returned by mapping %d: %w", i, ErrNoMapping)
-		}
-		if err, ok := output.(error); ok {
-			return nil, fmt.Errorf("error in mapping %d: %w", i, err)
-		}
-		_, ok = iter.Next()
-		if ok {
-			return nil, fmt.Errorf("unexpected results from mapping %d: %w", i, ErrMultipleMapping)
+		output, err = e.Apply(ctx, output, ctxVar)
+		if err != nil {
+			return nil, fmt.Errorf("error applying mapping %d: %w", i, err)
 		}
 	}
 
-	return output, nil
+	return output, err
 }
 
 func nameID(prefix, name string) string {
@@ -457,9 +609,26 @@ func (is IntSet) MarshalJSON() ([]byte, error) {
 	return json.Marshal(is.Ordered())
 }
 
+func (is IntSet) MarshalYAML() (interface{}, error) {
+	return is.Ordered(), nil
+}
+
 func (is *IntSet) UnmarshalJSON(src []byte) error {
 	var ints []int
-	if err := json.Unmarshal(src, &ints); err != nil {
+	if err := hujson.Unmarshal(src, &ints); err != nil {
+		return err
+	}
+	m := make(IntSet, len(ints))
+	for _, i := range ints {
+		m[i] = struct{}{}
+	}
+	*is = m
+	return nil
+}
+
+func (is *IntSet) UnmarshalYAML(node *yaml.Node) error {
+	var ints []int
+	if err := node.Decode(&ints); err != nil {
 		return err
 	}
 	m := make(IntSet, len(ints))
@@ -525,9 +694,26 @@ func (ss StringSet) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ss.Ordered())
 }
 
+func (ss StringSet) MarshalYAML() (interface{}, error) {
+	return ss.Ordered(), nil
+}
+
 func (ss *StringSet) UnmarshalJSON(src []byte) error {
 	var strs []string
-	if err := json.Unmarshal(src, &strs); err != nil {
+	if err := hujson.Unmarshal(src, &strs); err != nil {
+		return err
+	}
+	m := make(StringSet, len(strs))
+	for _, s := range strs {
+		m[s] = struct{}{}
+	}
+	*ss = m
+	return nil
+}
+
+func (ss *StringSet) UnmarshalYAML(node *yaml.Node) error {
+	var strs []string
+	if err := node.Decode(&strs); err != nil {
 		return err
 	}
 	m := make(StringSet, len(strs))

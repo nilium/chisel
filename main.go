@@ -27,6 +27,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -34,10 +35,12 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/julienschmidt/httprouter"
 	"github.com/rs/zerolog"
+	"github.com/tailscale/hujson"
 	"go.spiff.io/flagenv"
 	"go.spiff.io/sql/driver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -149,8 +152,8 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 	}
 
 	if len(conf.Bind) == 0 {
-		conf.Bind = []sockaddr.SockAddrMarshaler{
-			sockaddr.SockAddrMarshaler{
+		conf.Bind = []SockAddr{
+			SockAddr{
 				SockAddr: sockaddr.MustIPv4Addr("127.0.0.1:8080"),
 			},
 		}
@@ -185,7 +188,10 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 			if len(ed.Bind) > 0 && !ed.Bind.Contains(bid) {
 				continue
 			}
-			handler := &Handler{EndpointDef: ed}
+			handler := &Handler{
+				EndpointDef: ed,
+				db:          dbs,
+			}
 			method := strings.ToUpper(ed.Method)
 			fn := handler.Get
 			if method != "GET" {
@@ -269,7 +275,13 @@ func readConfigFile(path string) (*Config, error) {
 	}
 
 	var conf *Config
-	if err = json.Unmarshal(data, &conf); err != nil {
+	switch filepath.Ext(path) {
+	case ".yaml", ".yml":
+		err = yaml.Unmarshal(data, &conf)
+	default:
+		err = hujson.Unmarshal(data, &conf)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("error parsing config file: %w", err)
 	}
 

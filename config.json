@@ -1,17 +1,23 @@
+// NOTE: currently using hujson, so comments and trailing commas are permitted.
 {
+  // HTTP server bind addrs.
   "bind": [
     "127.0.0.1:8080"
   ],
+
+  // Databases to connect to.
   "databases": {
     "test": {
+      // TODO: detect and add a lock around all sqlite transactions.
       "url": "sqlite://test.db",
       "options": {
         "try_json": true
       }
     }
-  },
+  }, // (databases)
 
   "endpoints": [
+    // List all.
     {
       "method": "GET",
       "path": "/foo",
@@ -22,16 +28,25 @@
         "steps": [
           {
             "transaction": 0,
-            "query": "select * from foo"
+            "query": "select * from foo",
+            "map": [
+              // Wrap result array in data object.
+              "{ data: . }"
+            ]
           }
-        ]
-      }
-    },
+        ] // (steps)
+      } // (query)
+    }, // (List all)
+
+    // Fetch by ID.
     {
       "method": "GET",
       "path": "/foo/:id",
       "path_params": {
-        "id": { "map": ["tonumber"] }
+        "id": {
+          // Parse :id parameter as a number.
+          "map": [ "tonumber" ] // NB: tonumber is a jq expression.
+        }
       },
       "query": {
         "transactions": [
@@ -39,13 +54,18 @@
         ],
         "steps": [
           {
-            "query": "select * from foo where id = ?",
+            "query": "select * from foo where id = ? limit 1",
             "args": [
+              // Take the ID from the path and pass it as the first argument.
               { "path": "id" }
+            ],
+            "map": [
+              // Wrap first result in data object.
+              "if length == 0 then { __response: { status: 404 } } else { data: first } end"
             ]
           }
-        ]
-      }
-    }
-  ]
+        ] // (steps)
+      } // (query)
+    } // (Fetch by ID)
+  ] // (endpoints)
 }

@@ -1,0 +1,43 @@
+bind:
+  - 127.0.0.1:8080
+
+databases:
+  test:
+    options:
+      try_json: true
+    url: sqlite://test.db
+
+endpoints:
+  - method: GET
+    path: /foo
+    query:
+      steps:
+        - map:
+            - |
+              { data: . }
+          query: select * from foo
+          transaction: 0
+      transactions:
+        - db: test
+          isolation: none
+
+  - method: GET
+    path: /foo/:id
+    path_params:
+      id:
+        map: [tonumber]
+    query:
+      steps:
+        - args:
+            - path: id
+          map:
+            - |
+              if length == 0 then
+                { __response: { status: 404 } }
+              else
+                { data: first }
+              end
+          query: select * from foo where id = ? limit 1
+      transactions:
+        - db: test
+          isolation: none
