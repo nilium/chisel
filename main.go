@@ -59,22 +59,31 @@ func main() {
 }
 
 func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
-	log := zerolog.New(fs.Output()).With().Timestamp().Logger()
-	ctx = log.WithContext(ctx)
-
 	var (
+		logLevel           = zerolog.InfoLevel
 		configPath         = "config.json"
 		printConfigAndExit bool
 	)
 
 	fs.StringVar(&configPath, "c", configPath, "The path to load program config JSON from.")
 	fs.BoolVar(&printConfigAndExit, "C", printConfigAndExit, "Print the parsed program config and exit.")
+	fs.Func("v", "Set the log level.", func(v string) error {
+		lev, err := zerolog.ParseLevel(v)
+		if err == nil {
+			logLevel = lev
+		}
+		return err
+	})
+
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
 		return 2
 	} else if err != nil {
 		return 1
 	}
+
+	log := zerolog.New(fs.Output()).Level(logLevel).With().Timestamp().Logger()
+	ctx = log.WithContext(ctx)
 
 	if err := flagenv.SetMissing(fs); err != nil {
 		log.Error().Err(err).Msg("Error configuring chisel via environment.")
