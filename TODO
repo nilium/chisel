@@ -1,0 +1,22 @@
+TODO
+----
+  * Add POST form parsing. This is sort of stubbed out right now and
+    should be supported.
+
+  * Add locking around sqlite transactions so that write operations can
+    be considered vaguely safe.
+
+  * Support for insert queries that return the inserted row ID from
+    SQLite and MySQL. Not required for Postgres or Cockroach because
+    they allow selecting last inserted ID as part of an insert.
+
+    Both MySQL and SQLite may be able to work around this right now by
+    setting an isolation level to get a transaction, assuming that
+    selecting the last inserted ID works with multiple transactions (in
+    MySQL's case -- in SQLite's case, there can only be one).
+
+  * Better support for accessing previous-query results without the need
+    for full `expr` arguments.
+    
+  * Consider replacing YAML and JSON with codf, which would allow the
+    use of multi-line raw strings.
