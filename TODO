@@ -20,3 +20,16 @@ TODO
     
   * Consider replacing YAML and JSON with codf, which would allow the
     use of multi-line raw strings.
+
+  * Add support for upstream HTTP servers as a data source, with the
+    ability to make HTTP queries to upstream servers from input data.
+    Maybe also support POST requests somehow? TBD how this would work
+    but it would make for a very flexible translation server.
+
+  * Add support for upstream HTTP servers as a data source, with the
+    ability to make HTTP queries to upstream servers from input data.
+    Maybe also support POST requests somehow? TBD how this would work
+    but it would make for a very flexible translation server.
+
+  * Add no-query form to query steps so folks can do stuff like
+    transform the input body or set up other data between steps.
