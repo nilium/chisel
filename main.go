@@ -1,22 +1,22 @@
 // chisel - A tool to fetch, transform, and serve data.
-// Copyright (C) 2021 Noel Cower
+// Copyright 2021 Noel Cower
 //
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,9 +65,9 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 		printConfigAndExit bool
 	)
 
-	fs.StringVar(&configPath, "c", configPath, "The path to load program config JSON from.")
+	fs.StringVar(&configPath, "c", configPath, "The `path` to load program config JSON or YAML from.")
 	fs.BoolVar(&printConfigAndExit, "C", printConfigAndExit, "Print the parsed program config and exit.")
-	fs.Func("v", "Set the log level.", func(v string) error {
+	fs.Func("v", "Set the log `level`.", func(v string) error {
 		lev, err := zerolog.ParseLevel(v)
 		if err == nil {
 			logLevel = lev
@@ -132,6 +132,7 @@ func Main(ctx context.Context, fs *flag.FlagSet, args []string) int {
 			return 1
 		}
 		dbe.Options.BindType = bindType
+		dbe.options = dbe.Options.QueryOptions()
 
 		pool, err := sqlx.Open(driver, dsn)
 		if err != nil {
@@ -286,9 +287,13 @@ func readConfigFile(path string) (*Config, error) {
 	var conf *Config
 	switch filepath.Ext(path) {
 	case ".yaml", ".yml":
-		err = yaml.Unmarshal(data, &conf)
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		err = dec.Decode(&conf)
 	default:
-		err = hujson.Unmarshal(data, &conf)
+		dec := hujson.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		err = dec.Decode(&conf)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("error parsing config file: %w", err)

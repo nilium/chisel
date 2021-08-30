@@ -1,71 +1,75 @@
-// NOTE: currently using hujson, so comments and trailing commas are permitted.
 {
-  // HTTP server bind addrs.
   "bind": [
     "127.0.0.1:8080"
   ],
 
-  // Databases to connect to.
   "databases": {
     "test": {
-      // TODO: detect and add a lock around all sqlite transactions.
       "url": "sqlite://test.db",
       "options": {
         "try_json": true
       }
     }
-  }, // (databases)
+  },
 
   "endpoints": [
-    // List all.
     {
       "method": "GET",
-      "path": "/foo",
+      "path": "/builds",
       "query": {
         "transactions": [
-          { "db": "test", "isolation": "none" }
+          {
+            "db": "test",
+            "isolation": "none"
+          }
         ],
         "steps": [
           {
             "transaction": 0,
-            "query": "select * from foo",
+            "query": "select * from builds",
             "map": [
-              // Wrap result array in data object.
               "{ data: . }"
             ]
           }
-        ] // (steps)
-      } // (query)
-    }, // (List all)
-
-    // Fetch by ID.
+        ]
+      }
+    },
     {
       "method": "GET",
-      "path": "/foo/:id",
+      "path": "/builds/:id",
       "path_params": {
         "id": {
-          // Parse :id parameter as a number.
-          "map": [ "tonumber" ] // NB: tonumber is a jq expression.
+          "map": [
+            "tonumber",
+            "if . <= 0 then error(\"id must be a positive number\") else . end"
+          ]
         }
       },
       "query": {
         "transactions": [
-          { "db": "test", "isolation": "none" }
+          {
+            "db": "test",
+            "isolation": "none"
+          }
         ],
         "steps": [
           {
-            "query": "select * from foo where id = ? limit 1",
+            "query": "select * from builds where id = ? limit 1",
             "args": [
-              // Take the ID from the path and pass it as the first argument.
-              { "path": "id" }
+              {
+                "path": "id"
+              }
             ],
+            "map": [ "first" ]
+          },
+          {
+            "query": "select 1234 as artifact_id, 'http://foobar' as artifact_url",
             "map": [
-              // Wrap first result in data object.
-              "if length == 0 then { __response: { status: 404 } } else { data: first } end"
+              "{ data: ({ artifacts: . } * $context.outputs[0]) }"
             ]
           }
-        ] // (steps)
-      } // (query)
-    } // (Fetch by ID)
-  ] // (endpoints)
+        ]
+      }
+    }
+  ]
 }

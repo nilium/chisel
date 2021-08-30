@@ -1,18 +1,17 @@
 // chisel - A tool to fetch, transform, and serve data.
-// Copyright (C) 2021 Noel Cower
+// Copyright 2021 Noel Cower
 //
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
@@ -118,7 +117,7 @@ func (h *Handler) Get(w http.ResponseWriter, req *http.Request, pathParams httpr
 	params, err := h.ParseParams(req, pathParams)
 	if err != nil {
 		log.Trace().Err(err).Msg("Error parsing parameters. Request aborted.")
-		http.Error(w, "bad request", http.StatusBadRequest)
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -355,7 +354,7 @@ func (h *Handler) computeResponse(ctx context.Context, log zerolog.Logger, w htt
 			log.Error().Err(err).Msg("Failed to expand IN(?) arguments.")
 			return nil, err
 		}
-		query = sqlx.Rebind(t.db.Options.BindType, query)
+		query = sqlx.Rebind(t.db.options.BindType, query)
 
 		rows, err := t.QueryContext(ctx, query, args...)
 		defer rows.Close()
@@ -365,7 +364,7 @@ func (h *Handler) computeResponse(ctx context.Context, log zerolog.Logger, w htt
 			return nil, err
 		}
 
-		results, err := vdb.ScanRows(ctx, rows, &t.db.Options)
+		results, err := vdb.ScanRows(ctx, rows, t.db.options)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			log.Error().Err(err).Msg("Failed to scan result set.")

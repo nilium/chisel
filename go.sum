@@ -58,8 +58,8 @@ github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9dec
 go.spiff.io/flagenv v0.1.0 h1:t1EfA+0BAnfOw0KowRHhoB5ulRoZbjb0Z784TTbk3MU=
 go.spiff.io/flagenv v0.1.0/go.mod h1:p7RQDlskcHpXWuYJNzFAG+5/69ApnPfNfNdVY8pJGP8=
 go.spiff.io/go-ini v0.2.0/go.mod h1:h4CttGw62dZCr2s9w4nlYF2jl4jJei7/yUfBg9ieeng=
-go.spiff.io/sql v0.2.0 h1:OxdsfnZ7LPbt1uWcZPnw7BvA5thd2CRKwUzyswvOibs=
-go.spiff.io/sql v0.2.0/go.mod h1:tDVltWwvXhphp87vrmPNNWqyPa/SQ76bD/mECurUV+g=
+go.spiff.io/sql v0.3.0 h1:a+saiHSsR77A8Q6xy8bGd+lsI56Byh0tcLHF2eCe71I=
+go.spiff.io/sql v0.3.0/go.mod h1:HdCAftRIgCB0usMnyMp9qqFomEMnpjjclcP6SHkGxx4=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
 golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=

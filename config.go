@@ -1,22 +1,22 @@
 // chisel - A tool to fetch, transform, and serve data.
-// Copyright (C) 2021 Noel Cower
+// Copyright 2021 Noel Cower
 //
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -36,6 +36,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func unmarshalStrict(p []byte, dest interface{}) error {
+	dec := hujson.NewDecoder(bytes.NewReader(p))
+	dec.DisallowUnknownFields()
+	return dec.Decode(&dest)
+}
+
 type SockAddr struct {
 	sockaddr.SockAddr
 }
@@ -54,10 +60,10 @@ func (sa *SockAddr) UnmarshalText(src []byte) error {
 }
 
 type Config struct {
-	Bind      []SockAddr              `json:"bind"`
-	Databases map[string]*DatabaseDef `json:"databases"`
-	Modules   map[string]*ModuleDef   `json:"modules"`
-	Endpoints EndpointDefs            `json:"endpoints"`
+	Bind      []SockAddr              `json:"bind" yaml:"bind"`
+	Databases map[string]*DatabaseDef `json:"databases" yaml:"databases"`
+	Modules   map[string]*ModuleDef   `json:"modules" yaml:"modules"`
+	Endpoints EndpointDefs            `json:"endpoints" yaml:"endpoints"`
 }
 
 func (c *Config) Validate() error {
@@ -74,15 +80,39 @@ func (c *Config) Validate() error {
 	return errorOrNil(me)
 }
 
+type QueryOptions struct {
+	TryJSON    bool           `json:"try_json" yaml:"try_json"`
+	SkipJSON   bool           `json:"skip_json" yaml:"skip_json"`
+	TimeFormat vdb.TimeFormat `json:"time_format" yaml:"time_format"`
+	TimeLayout string         `json:"time_layout,omitempty" yaml:"time_layout,omitempty"` // Used if TimeFormat is TimeCustom.
+
+	BindType int `json:"-" yaml:"-"`
+}
+
+func (q *QueryOptions) QueryOptions() *vdb.QueryOptions {
+	if q == nil {
+		return &vdb.QueryOptions{}
+	}
+	return &vdb.QueryOptions{
+		TryJSON:    q.TryJSON,
+		SkipJSON:   q.SkipJSON,
+		TimeFormat: q.TimeFormat,
+		TimeLayout: q.TimeLayout,
+		Compact:    true,
+		BindType:   q.BindType,
+	}
+}
+
 type DatabaseDef struct {
-	URL string `json:"url"`
+	URL string `json:"url" yaml:"url"`
 
-	MaxIdle     int      `json:"max_idle"`
-	MaxIdleTime Duration `json:"max_idle_time"`
-	MaxOpen     int      `json:"max_open"`
-	MaxLifeTime Duration `json:"max_life_time"`
+	MaxIdle     int      `json:"max_idle" yaml:"max_idle"`
+	MaxIdleTime Duration `json:"max_idle_time" yaml:"max_idle_time"`
+	MaxOpen     int      `json:"max_open" yaml:"max_open"`
+	MaxLifeTime Duration `json:"max_life_time" yaml:"max_life_time"`
 
-	Options vdb.QueryOptions `json:"options"`
+	Options QueryOptions      `json:"options" yaml:"options"`
+	options *vdb.QueryOptions // Converted options.
 }
 
 type Duration struct {
@@ -212,14 +242,14 @@ type EndpointDefs []*EndpointDef
 type ParamMappings map[string]*ParamMapping
 
 type EndpointDef struct {
-	Bind        IntSet        `json:"bind"`
-	Method      string        `json:"method"`
-	Path        string        `json:"path"`
-	BodyType    BodyType      `json:"body_type"`
-	QueryParams ParamMappings `json:"query_params"`
-	PathParams  ParamMappings `json:"path_params"`
+	Bind        IntSet        `json:"bind" yaml:"bind"`
+	Method      string        `json:"method" yaml:"method"`
+	Path        string        `json:"path" yaml:"path"`
+	BodyType    BodyType      `json:"body_type" yaml:"body_type"`
+	QueryParams ParamMappings `json:"query_params" yaml:"query_params"`
+	PathParams  ParamMappings `json:"path_params" yaml:"path_params"`
 
-	Query *QueryDef `json:"query"`
+	Query *QueryDef `json:"query" yaml:"query"`
 }
 
 func (ed *EndpointDef) Validate() error {
@@ -240,8 +270,8 @@ func (ed *EndpointDef) Validate() error {
 }
 
 type QueryDef struct {
-	Transactions []*TransactionDef `json:"transactions"`
-	Steps        []*StepDef        `json:"steps"`
+	Transactions []*TransactionDef `json:"transactions" yaml:"transactions"`
+	Steps        []*StepDef        `json:"steps" yaml:"steps"`
 }
 
 func (qd *QueryDef) Validate() error {
@@ -272,26 +302,26 @@ func (qd *QueryDef) Validate() error {
 }
 
 type StepDef struct {
-	Transaction int     `json:"transaction"`
-	Query       string  `json:"query"`
-	Args        ArgDefs `json:"args"`
-	Map         Mapping `json:"map"`
+	Transaction int     `json:"transaction" yaml:"transaction"`
+	Query       string  `json:"query" yaml:"query"`
+	Args        ArgDefs `json:"args" yaml:"args"`
+	Map         Mapping `json:"map" yaml:"map"`
 }
 
 type TransactionDef struct {
-	DB        string         `json:"db"`
-	Isolation IsolationLevel `json:"isolation"`
+	DB        string         `json:"db" yaml:"db"`
+	Isolation IsolationLevel `json:"isolation" yaml:"isolation"`
 }
 
 type ParamMapping struct {
-	Map Mapping `json:"map"`
+	Map Mapping `json:"map" yaml:"map"`
 }
 
 type ArgDefs []ArgDef
 
 func (ads *ArgDefs) UnmarshalJSON(src []byte) error {
 	var defs []json.RawMessage
-	if err := hujson.Unmarshal(src, &defs); err != nil {
+	if err := unmarshalStrict(src, &defs); err != nil {
 		return err
 	}
 
@@ -379,7 +409,7 @@ func UnmarshalArgDefYAML(node *yaml.Node) (ArgDef, error) {
 
 func UnmarshalArgDef(blob json.RawMessage) (ArgDef, error) {
 	var m map[string]json.RawMessage
-	if hujson.Unmarshal(blob, &m) == nil {
+	if unmarshalStrict(blob, &m) == nil {
 		if m == nil {
 			return ArgLiteral{Literal: nil}, nil
 		}
@@ -395,19 +425,19 @@ func UnmarshalArgDef(blob json.RawMessage) (ArgDef, error) {
 		switch key {
 		case "path":
 			var ref PathParamRef
-			if err := hujson.Unmarshal(value, &ref.Name); err != nil {
+			if err := unmarshalStrict(value, &ref.Name); err != nil {
 				return nil, fmt.Errorf("error unmarshaling path arg def: %w", err)
 			}
 			return ref, nil
 		case "query":
 			var ref QueryParamRef
-			if err := hujson.Unmarshal(value, &ref.Name); err != nil {
+			if err := unmarshalStrict(value, &ref.Name); err != nil {
 				return nil, fmt.Errorf("error unmarshaling query arg def: %w", err)
 			}
 			return ref, nil
 		case "expr":
 			var expr Expr
-			if err := hujson.Unmarshal(value, &expr); err != nil {
+			if err := unmarshalStrict(value, &expr); err != nil {
 				return nil, fmt.Errorf("error unmarshaling expr arg def: %w", err)
 			}
 			return ExprParam{&expr}, nil
@@ -417,7 +447,7 @@ func UnmarshalArgDef(blob json.RawMessage) (ArgDef, error) {
 	}
 
 	lit := ArgLiteral{}
-	if err := hujson.Unmarshal(blob, &lit.Literal); err != nil {
+	if err := unmarshalStrict(blob, &lit.Literal); err != nil {
 		return nil, fmt.Errorf("error unmarshaling arg def as literal: %w", err)
 	}
 
@@ -435,7 +465,7 @@ func (a ArgLiteral) MarshalJSON() ([]byte, error) {
 func (ArgLiteral) param() {}
 
 type PathParamRef struct {
-	Name string `json:"path"`
+	Name string `json:"path" yaml:"path"`
 }
 
 func (p PathParamRef) Value() (interface{}, error) {
@@ -445,13 +475,13 @@ func (p PathParamRef) Value() (interface{}, error) {
 func (PathParamRef) param() {}
 
 type QueryParamRef struct {
-	Name string `json:"query"`
+	Name string `json:"query" yaml:"query"`
 }
 
 func (QueryParamRef) param() {}
 
 type ExprParam struct {
-	Expr *Expr `json:"expr"`
+	Expr *Expr `json:"expr" yaml:"expr"`
 }
 
 func (ExprParam) param() {}
@@ -615,7 +645,7 @@ func (is IntSet) MarshalYAML() (interface{}, error) {
 
 func (is *IntSet) UnmarshalJSON(src []byte) error {
 	var ints []int
-	if err := hujson.Unmarshal(src, &ints); err != nil {
+	if err := unmarshalStrict(src, &ints); err != nil {
 		return err
 	}
 	m := make(IntSet, len(ints))
@@ -700,7 +730,7 @@ func (ss StringSet) MarshalYAML() (interface{}, error) {
 
 func (ss *StringSet) UnmarshalJSON(src []byte) error {
 	var strs []string
-	if err := hujson.Unmarshal(src, &strs); err != nil {
+	if err := unmarshalStrict(src, &strs); err != nil {
 		return err
 	}
 	m := make(StringSet, len(strs))
